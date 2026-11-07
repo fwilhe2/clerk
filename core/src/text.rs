@@ -21,6 +21,11 @@ const THREAD: &str = "clerk-reader";
 /// scan's memory; a streaming reader would lift it.
 const MAX_FILE: u64 = 256 << 20;
 
+/// An ODF package, `.docx` or `.xlsx` whose parts say they unpack to more than this is not read:
+/// a zip bomb, or a workbook too large to be worth searching. A large real workbook unpacks to a
+/// few dozen megabytes.
+const MAX_UNPACKED: u64 = 64 << 20;
+
 /// ponytail: text past this is not searched. A statement or a letter is far below it.
 const MAX_TEXT: usize = 8 << 20;
 
@@ -55,6 +60,9 @@ fn of(name: &str, bytes: &[u8]) -> Text {
     let (reader, got): (&'static str, Option<Result<String, String>>) =
         if bytes.starts_with(b"%PDF-") {
             ("pdf", guarded(|| pdf(bytes)))
+        } else if let Some(size) = unpacked(bytes).filter(|&size| size > MAX_UNPACKED) {
+            let why = format!("it unpacks to {} MiB, more than clerk reads", size >> 20);
+            ("grind", Some(Err(why)))
         } else {
             ("grind", guarded(|| grind_open::text(name, bytes)).flatten())
         };
@@ -76,6 +84,20 @@ fn of(name: &str, bytes: &[u8]) -> Text {
             None => Text::None,
         },
     }
+}
+
+/// What a zip archive's directory says its parts unpack to, without unpacking any; `None` for
+/// anything that is not a zip. The directory can understate, which grind's own limits catch.
+fn unpacked(bytes: &[u8]) -> Option<u64> {
+    if !bytes.starts_with(b"PK\x03\x04") {
+        return None;
+    }
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
+    Some(
+        (0..archive.len())
+            .filter_map(|i| archive.by_index_raw(i).ok().map(|part| part.size()))
+            .fold(0, u64::saturating_add),
+    )
 }
 
 fn pdf(bytes: &[u8]) -> Result<String, String> {
@@ -147,6 +169,27 @@ mod tests {
         quiet_reader_panics();
         match of("x.pdf", b"%PDF-1.7 nothing after") {
             Text::Failed { reader: "pdf", .. } => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_zip_that_unpacks_to_too_much_is_not_read() {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("mimetype", options).unwrap();
+        zip.write_all(b"application/vnd.oasis.opendocument.text")
+            .unwrap();
+        zip.start_file("content.xml", options).unwrap();
+        let chunk = vec![b' '; 1 << 20];
+        for _ in 0..=(MAX_UNPACKED >> 20) {
+            zip.write_all(&chunk).unwrap();
+        }
+        let bytes = zip.finish().unwrap().into_inner();
+        match of("bomb.odt", &bytes) {
+            Text::Failed { why, .. } => assert!(why.contains("65 MiB"), "{why}"),
             other => panic!("{other:?}"),
         }
     }

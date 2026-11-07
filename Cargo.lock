@@ -256,6 +256,7 @@ dependencies = [
  "rusqlite",
  "tempfile",
  "walkdir",
+ "zip",
 ]
 
 [[package]]
