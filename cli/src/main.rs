@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use clerk_core::{DocumentText, Index, Progress, Report, format_utc, hash_file};
+use clerk_core::{Advice, DocumentText, Index, Progress, Report, format_utc, hash_file};
 
 /// Keeps track of your documents, wherever they are in your documents folder. clerk reads your
 /// files and never changes, moves or deletes one unless you ask. Its index is kept outside the
@@ -56,6 +56,15 @@ enum Command {
     ///
     /// The file is recognised by its content, so a copy of it anywhere works too.
     Where { file: PathBuf },
+    /// Where each file in a folder like Downloads belongs, and why
+    ///
+    /// Learned from where you already keep files like it: files named the same way, or
+    /// documents sharing a word, such as a customer number, that no other folder's documents
+    /// have. A file already in your documents is said to be. Nothing is moved.
+    Inbox {
+        /// The folder to look at, ~/Downloads if none is named
+        folder: Option<PathBuf>,
+    },
     /// What is indexed, and when it was last scanned
     Status,
 }
@@ -144,6 +153,30 @@ fn run(cli: Cli) -> Result<(), String> {
                         event.kind.as_str(),
                         event.path.display()
                     ),
+                }
+            }
+            Ok(())
+        }
+        Command::Inbox { folder } => {
+            let folder = match folder {
+                Some(folder) => folder,
+                None => std::env::var_os("HOME")
+                    .map(|home| PathBuf::from(home).join("Downloads"))
+                    .ok_or("name a folder to look at")?,
+            };
+            for item in index.inbox(&folder).map_err(|e| e.to_string())? {
+                let name = item.path.file_name().unwrap_or_default().to_string_lossy();
+                match item.advice {
+                    Advice::Suggest { folder, reason } => {
+                        println!("{name}\t→ {}", folder.display());
+                        println!("\t{reason}");
+                    }
+                    Advice::Known(paths) => {
+                        for path in paths {
+                            println!("{name}\tis already at {}", path.display());
+                        }
+                    }
+                    Advice::Nothing => println!("{name}\tno suggestion"),
                 }
             }
             Ok(())

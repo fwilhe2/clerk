@@ -87,7 +87,15 @@ fn scanning_finding_and_asking_leave_the_folder_as_it_was() {
         extra = 2;
     }
     let elsewhere = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    fs::write(
+        downloads.path().join("Kontoauszug_2_2026-11.pdf"),
+        b"%PDF new",
+    )
+    .unwrap();
+    fs::write(downloads.path().join("letter copy.txt"), b"Dear reader").unwrap();
     let before = snapshot(docs.path());
+    let inbox_before = snapshot(downloads.path());
 
     let mut index = Index::open(&elsewhere.path().join("index.sqlite")).unwrap();
     let first = index.scan(docs.path(), |_| {}).unwrap();
@@ -102,9 +110,12 @@ fn scanning_finding_and_asking_leave_the_folder_as_it_was() {
     let hash = hash_file(&docs.path().join("letter.txt")).unwrap();
     index.paths_of(&hash).unwrap();
     index.history(&hash).unwrap();
+    let advice = index.inbox(downloads.path()).unwrap();
+    assert_eq!(advice.len(), 2);
     drop(index);
 
     assert_eq!(snapshot(docs.path()), before);
+    assert_eq!(snapshot(downloads.path()), inbox_before);
 }
 
 #[test]

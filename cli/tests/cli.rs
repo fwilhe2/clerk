@@ -146,3 +146,44 @@ fn a_scan_waits_for_ocr_and_is_read_once_it_is_installed() {
     assert!(ok(clerk(&index, &["text", scan])).contains("Beitragsrechnung"));
     assert!(ok(clerk(&index, &["find", "versicherung"])).contains("scan.pdf"));
 }
+
+#[test]
+fn inbox_suggests_a_folder_and_says_why() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let index = root.join("index.sqlite");
+    let bank = root.join("Documents/Finanzen/Bank A");
+    fs::create_dir_all(&bank).unwrap();
+    for n in 1..=3 {
+        fs::write(
+            bank.join(format!("Kontoauszug_{n}_2026-0{n}.txt")),
+            format!("{n}"),
+        )
+        .unwrap();
+    }
+    let downloads = root.join("Downloads");
+    fs::create_dir_all(&downloads).unwrap();
+    fs::write(downloads.join("Kontoauszug_4_2026-04.txt"), "4").unwrap();
+    fs::write(downloads.join("Kontoauszug_1 copy.txt"), "1").unwrap();
+    ok(clerk(
+        &index,
+        &["scan", root.join("Documents").to_str().unwrap()],
+    ));
+
+    let said = ok(clerk(&index, &["inbox", downloads.to_str().unwrap()]));
+    assert!(
+        said.contains(&format!(
+            "Kontoauszug_4_2026-04.txt\t→ {}\n",
+            bank.display()
+        )),
+        "{said}"
+    );
+    assert!(
+        said.contains("\tall 3 files named Kontoauszug_<n>_<date>.txt are there"),
+        "{said}"
+    );
+    assert!(
+        said.contains("Kontoauszug_1 copy.txt\tis already at"),
+        "{said}"
+    );
+}
