@@ -7,6 +7,7 @@
 
 mod error;
 mod index;
+mod ocr;
 mod read;
 mod scan;
 mod text;

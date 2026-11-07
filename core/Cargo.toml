@@ -18,6 +18,7 @@ pdf-extract = "0.12"
 zip = { version = "9", default-features = false }
 # SQLite compiled in, so the index is the same file format on every system.
 rusqlite = { version = "0.37", features = ["bundled"] }
+tempfile = "3"
 walkdir = "2"
 
 [dev-dependencies]

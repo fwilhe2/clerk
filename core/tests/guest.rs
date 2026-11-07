@@ -11,6 +11,8 @@ use std::time::SystemTime;
 
 use clerk_core::{Error, Index, hash_file};
 
+mod common;
+
 #[derive(Debug, PartialEq)]
 struct Entry {
     path: PathBuf,
@@ -74,12 +76,26 @@ fn documents() -> tempfile::TempDir {
 #[test]
 fn scanning_finding_and_asking_leave_the_folder_as_it_was() {
     let docs = documents();
+    // A scan and a picture, so OCR runs too, where it is installed.
+    let mut extra = 0;
+    if let (Some(scan), Some(picture)) = (
+        common::scanned_pdf(&["Bescheid ueber Grundsteuer"]),
+        common::picture(&["Garantieschein"], "-png"),
+    ) {
+        fs::write(docs.path().join("scan.pdf"), scan).unwrap();
+        fs::write(docs.path().join("receipt.png"), picture).unwrap();
+        extra = 2;
+    }
     let elsewhere = tempfile::tempdir().unwrap();
     let before = snapshot(docs.path());
 
     let mut index = Index::open(&elsewhere.path().join("index.sqlite")).unwrap();
     let first = index.scan(docs.path(), |_| {}).unwrap();
-    assert_eq!(first.files, 3, "the hidden file is left out: {first:?}");
+    assert_eq!(
+        first.files,
+        3 + extra,
+        "the hidden file is left out: {first:?}"
+    );
     index.scan(docs.path(), |_| {}).unwrap();
     index.find(&["kontoauszug"]).unwrap();
     index.status().unwrap();

@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::params;
 
 use crate::index::{Index, hash_of, key, path_of};
+use crate::ocr::Ocr;
 use crate::text::{self, Text};
 use crate::{Error, EventKind, Hash, Result, read, time};
 
@@ -37,6 +38,8 @@ pub struct Report {
     /// Documents a reader applies to and failed on, and why. Not retried until the readers
     /// change.
     pub no_text: Vec<(PathBuf, String)>,
+    /// Scans and pictures that OCR would read, were it installed.
+    pub awaiting_ocr: usize,
 }
 
 /// How far a scan is, for a shell to show.
@@ -287,10 +290,11 @@ impl Index {
         progress: &mut impl FnMut(Progress),
         report: &mut Report,
     ) -> Result<()> {
+        let ocr = Ocr::find();
         let mut pending: Vec<(Hash, PathBuf)> = {
             let mut stmt = self.conn.prepare(
-                "SELECT f.hash, f.path, t.readers, t.failed, t.reader FROM files f \
-                 LEFT JOIN texts t ON t.hash = f.hash ORDER BY f.path",
+                "SELECT f.hash, f.path, t.readers, t.failed, t.reader, t.awaiting_ocr \
+                 FROM files f LEFT JOIN texts t ON t.hash = f.hash ORDER BY f.path",
             )?;
             let rows = stmt.query_map([], |r| {
                 Ok((
@@ -299,16 +303,21 @@ impl Index {
                     r.get::<_, Option<i64>>(2)?,
                     r.get::<_, Option<String>>(3)?,
                     r.get::<_, Option<String>>(4)?,
+                    r.get::<_, Option<bool>>(5)?.unwrap_or(false),
                 ))
             })?;
             let mut pending = Vec::new();
             let mut counted: HashSet<Hash> = HashSet::new();
             for row in rows {
-                let (hash, path, readers, failed, reader) = row?;
+                let (hash, path, readers, failed, reader, awaiting) = row?;
                 if !path.starts_with(root) || !counted.insert(hash) {
                     continue;
                 }
                 match (readers, failed) {
+                    (Some(r), _) if r >= text::READERS && awaiting && ocr.is_none() => {
+                        report.awaiting_ocr += 1;
+                    }
+                    (Some(r), _) if r >= text::READERS && awaiting => pending.push((hash, path)),
                     (Some(r), None) if r >= text::READERS => {
                         report.texts += usize::from(reader.is_some());
                     }
@@ -328,7 +337,7 @@ impl Index {
             let batch: Vec<(Hash, PathBuf)> =
                 pending.drain(..pending.len().min(workers * 8)).collect();
             done += batch.len();
-            let read = read_all(batch, workers);
+            let read = read_all(batch, workers, ocr.as_ref());
             progress(Progress::Texts(done, total));
             let tx = self.conn.transaction()?;
             for (hash, path, got) in read {
@@ -337,14 +346,17 @@ impl Index {
                     [&hash.0[..]],
                 )?;
                 tx.execute("DELETE FROM texts WHERE hash = ?1", [&hash.0[..]])?;
+                let awaiting = got == Text::AwaitingOcr;
+                report.awaiting_ocr += usize::from(awaiting);
                 let (reader, failed, body) = match got {
                     Text::Read { reader, text } => (Some(reader), None, Some(text)),
-                    Text::None => (None, None, None),
+                    Text::None | Text::AwaitingOcr => (None, None, None),
                     Text::Failed { reader, why } => (Some(reader), Some(why), None),
                 };
                 tx.execute(
-                    "INSERT INTO texts (hash, reader, readers, failed) VALUES (?1, ?2, ?3, ?4)",
-                    params![&hash.0[..], reader, text::READERS, failed],
+                    "INSERT INTO texts (hash, reader, readers, failed, awaiting_ocr) \
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![&hash.0[..], reader, text::READERS, failed, awaiting],
                 )?;
                 if let Some(body) = body {
                     report.texts += 1;
@@ -365,7 +377,11 @@ impl Index {
 
 /// Read the text of every document in `batch`, on `workers` threads. One that cannot be opened
 /// now is left out: the scan has said so, and the next one tries again.
-fn read_all(batch: Vec<(Hash, PathBuf)>, workers: usize) -> Vec<(Hash, PathBuf, Text)> {
+fn read_all(
+    batch: Vec<(Hash, PathBuf)>,
+    workers: usize,
+    ocr: Option<&Ocr>,
+) -> Vec<(Hash, PathBuf, Text)> {
     let next = std::sync::atomic::AtomicUsize::new(0);
     let batch = &batch;
     std::thread::scope(|scope| {
@@ -378,7 +394,7 @@ fn read_all(batch: Vec<(Hash, PathBuf)>, workers: usize) -> Vec<(Hash, PathBuf, 
                         let Some((hash, path)) = batch.get(at) else {
                             break read;
                         };
-                        if let Ok(got) = text::read(path) {
+                        if let Ok(got) = text::read(path, ocr) {
                             read.push((*hash, path.clone(), got));
                         }
                     }

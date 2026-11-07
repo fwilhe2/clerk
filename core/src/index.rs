@@ -64,6 +64,10 @@ const MIGRATIONS: &[&str] = &[
         tokenize = 'trigram remove_diacritics 1'
     );
 "#,
+    r#"
+    -- A scan or a picture read when OCR is installed, and not before.
+    ALTER TABLE texts ADD COLUMN awaiting_ocr INTEGER NOT NULL DEFAULT 0;
+"#,
 ];
 
 pub struct Index {
@@ -90,6 +94,8 @@ pub enum DocumentText {
     Unread,
     /// No reader applies to it.
     None,
+    /// A scan or a picture, to be read once OCR is installed.
+    AwaitingOcr,
     Read {
         reader: String,
         text: String,
@@ -164,6 +170,8 @@ pub struct Status {
     pub documents: usize,
     /// Documents in a folder whose text was read and can be searched.
     pub with_text: usize,
+    /// Scans and pictures in a folder that OCR would read, were it installed.
+    pub awaiting_ocr: usize,
 }
 
 #[cfg(unix)]
@@ -326,7 +334,7 @@ impl Index {
         let row = self
             .conn
             .query_row(
-                "SELECT t.reader, t.failed, s.body FROM texts t \
+                "SELECT t.reader, t.failed, s.body, t.awaiting_ocr FROM texts t \
                  LEFT JOIN text_search s ON s.rowid = t.id WHERE t.hash = ?1",
                 [&hash.0[..]],
                 |r| {
@@ -334,15 +342,17 @@ impl Index {
                         r.get::<_, Option<String>>(0)?,
                         r.get::<_, Option<String>>(1)?,
                         r.get::<_, Option<String>>(2)?,
+                        r.get::<_, bool>(3)?,
                     ))
                 },
             )
             .optional()?;
         Ok(match row {
             None => DocumentText::Unread,
+            Some((.., true)) => DocumentText::AwaitingOcr,
             Some((None, ..)) => DocumentText::None,
-            Some((Some(reader), Some(why), _)) => DocumentText::Failed { reader, why },
-            Some((Some(reader), None, text)) => DocumentText::Read {
+            Some((Some(reader), Some(why), ..)) => DocumentText::Failed { reader, why },
+            Some((Some(reader), None, text, _)) => DocumentText::Read {
                 reader,
                 text: text.unwrap_or_default(),
             },
@@ -407,12 +417,18 @@ impl Index {
             [],
             |r| r.get(0),
         )?;
+        let awaiting_ocr: i64 = self.conn.query_row(
+            "SELECT count(*) FROM texts WHERE awaiting_ocr AND hash IN (SELECT hash FROM files)",
+            [],
+            |r| r.get(0),
+        )?;
         Ok(Status {
             index: self.file.clone(),
             roots,
             files: files.len(),
             documents: documents as usize,
             with_text: with_text as usize,
+            awaiting_ocr: awaiting_ocr as usize,
         })
     }
 

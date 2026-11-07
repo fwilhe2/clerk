@@ -7,6 +7,9 @@
 use std::fs;
 use std::process::{Command, Output};
 
+#[path = "../../core/tests/common/mod.rs"]
+mod common;
+
 fn clerk(index: &std::path::Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_clerk"))
         .arg("--index")
@@ -103,4 +106,43 @@ fn a_document_is_found_and_followed_after_a_move() {
             .status
             .success()
     );
+}
+
+#[test]
+fn a_scan_waits_for_ocr_and_is_read_once_it_is_installed() {
+    if !common::ocr_installed() {
+        return;
+    }
+    let docs = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let index = elsewhere.path().join("index.sqlite");
+    let root = docs.path().canonicalize().unwrap();
+    let scan = root.join("scan.pdf");
+    fs::write(
+        &scan,
+        common::scanned_pdf(&["Kfz Versicherung Beitragsrechnung"]).unwrap(),
+    )
+    .unwrap();
+    let scan = scan.to_str().unwrap();
+
+    let without = Command::new(env!("CARGO_BIN_EXE_clerk"))
+        .arg("--index")
+        .arg(&index)
+        .args(["scan", root.to_str().unwrap()])
+        .env("PATH", elsewhere.path())
+        .output()
+        .unwrap();
+    let report = ok(without);
+    assert!(
+        report.contains("1 scans or pictures to read once tesseract is installed"),
+        "{report}"
+    );
+    assert!(ok(clerk(&index, &["status"])).contains("awaiting OCR\t1"));
+    let waiting = clerk(&index, &["text", scan]);
+    assert!(String::from_utf8_lossy(&waiting.stderr).contains("install tesseract"));
+
+    let with = ok(clerk(&index, &["scan"]));
+    assert!(with.contains("1 with text"), "{with}");
+    assert!(ok(clerk(&index, &["text", scan])).contains("Beitragsrechnung"));
+    assert!(ok(clerk(&index, &["find", "versicherung"])).contains("scan.pdf"));
 }

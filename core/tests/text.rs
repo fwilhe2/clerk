@@ -10,67 +10,8 @@ use std::path::Path;
 
 use clerk_core::{DocumentText, Index, hash_file};
 
-/// A one-page PDF whose text layer holds `lines`, with a correct cross-reference table.
-fn pdf(lines: &[&str]) -> Vec<u8> {
-    let mut content = String::from("BT /F1 12 Tf 72 720 Td 14 TL\n");
-    for line in lines {
-        content.push_str(&format!("({line}) Tj T*\n"));
-    }
-    content.push_str("ET");
-    let objects = [
-        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
-        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
-        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] \
-         /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
-            .to_owned(),
-        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica \
-         /Encoding /WinAnsiEncoding >>"
-            .to_owned(),
-        format!(
-            "<< /Length {} >>\nstream\n{content}\nendstream",
-            content.len() + 1
-        ),
-    ];
-    let mut out = b"%PDF-1.4\n".to_vec();
-    let mut offsets = Vec::new();
-    for (i, object) in objects.iter().enumerate() {
-        offsets.push(out.len());
-        out.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", i + 1).as_bytes());
-    }
-    let xref = out.len();
-    out.extend_from_slice(
-        format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
-    );
-    for offset in offsets {
-        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
-    }
-    out.extend_from_slice(
-        format!(
-            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
-            objects.len() + 1
-        )
-        .as_bytes(),
-    );
-    out
-}
-
-/// A flat ODF text document, one paragraph per line.
-fn fodt(lines: &[&str]) -> Vec<u8> {
-    let body: String = lines
-        .iter()
-        .map(|l| format!("<text:p>{l}</text:p>"))
-        .collect();
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
-  xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
-  office:version="1.4" office:mimetype="application/vnd.oasis.opendocument.text">
-<office:body><office:text>{body}</office:text></office:body>
-</office:document>
-"#
-    )
-    .into_bytes()
-}
+mod common;
+use common::{fodt, pdf};
 
 fn write(root: &Path, name: &str, bytes: &[u8]) {
     let path = root.join(name);
@@ -113,7 +54,7 @@ fn find_finds_a_word_inside_a_statement() {
         "notes.txt",
         "Die Kaution wurde überwiesen.\n".as_bytes(),
     );
-    write(&root, "photo.jpg", b"\xff\xd8\xff\xe0\x00\x10JFIF\x00");
+    write(&root, "backup.bin", b"\x00\x01\x02 binary");
 
     let report = index.scan(&root, |_| {}).unwrap();
     assert_eq!(report.texts, 4, "{report:?}");
@@ -145,8 +86,8 @@ fn find_finds_a_word_inside_a_statement() {
     let by_name = index.find(&["scan_0042"]).unwrap().remove(0);
     assert_eq!(by_name.context, None, "found by its path, nothing to show");
 
-    let photo = hash_file(&root.join("photo.jpg")).unwrap();
-    assert_eq!(index.text(&photo).unwrap(), DocumentText::None);
+    let binary = hash_file(&root.join("backup.bin")).unwrap();
+    assert_eq!(index.text(&binary).unwrap(), DocumentText::None);
     assert_eq!(index.status().unwrap().with_text, 4);
 }
 

@@ -101,6 +101,11 @@ fn run(cli: Cli) -> Result<(), String> {
                     "{} has not been read; scan the folder it is in",
                     file.display()
                 )),
+                DocumentText::AwaitingOcr => Err(format!(
+                    "{} is a scan or a picture; install tesseract (and poppler's pdftoppm for a \
+                     PDF) and scan again to read it",
+                    file.display()
+                )),
                 DocumentText::None => Err(format!(
                     "{}: clerk does not read text from this kind of file",
                     file.display()
@@ -149,6 +154,9 @@ fn run(cli: Cli) -> Result<(), String> {
             println!("files\t{}", status.files);
             println!("documents\t{}", status.documents);
             println!("with text\t{}", status.with_text);
+            if status.awaiting_ocr > 0 {
+                println!("awaiting OCR\t{}", status.awaiting_ocr);
+            }
             for root in status.roots {
                 let scanned = root.scanned.map_or("never".to_owned(), format_utc);
                 println!(
@@ -215,14 +223,17 @@ fn print_report(report: &Report, verbose: bool) {
         report.changed.len(),
         report.removed.len()
     );
-    println!(
-        "  {} with text{}",
-        report.texts,
-        match report.no_text.len() {
-            0 => String::new(),
-            n => format!(", {n} whose text could not be read"),
-        }
-    );
+    let mut texts = format!("  {} with text", report.texts);
+    if !report.no_text.is_empty() {
+        texts += &format!(", {} whose text could not be read", report.no_text.len());
+    }
+    if report.awaiting_ocr > 0 {
+        texts += &format!(
+            ", {} scans or pictures to read once tesseract is installed",
+            report.awaiting_ocr
+        );
+    }
+    println!("{texts}");
     if verbose {
         for path in &report.added {
             println!("added\t{}", path.display());

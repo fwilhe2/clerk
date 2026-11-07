@@ -3,15 +3,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! What a document says: its text, read once per document and kept in the index for search. A
-//! PDF's text layer, anything grind opens (ODF, `.docx`, `.xlsx`, CSV, Markdown), and plain text.
+//! PDF's text layer, anything grind opens (ODF, `.docx`, `.xlsx`, CSV, Markdown), plain text, and
+//! a scan or a picture through OCR ([`crate::ocr`]).
 
 use std::io::Read as _;
 use std::path::Path;
 
+use crate::ocr::{self, Ocr};
 use crate::read;
 
 /// Raised whenever a reader gets better, so documents read by an older one are read again.
-pub(crate) const READERS: i64 = 1;
+pub(crate) const READERS: i64 = 2;
 
 /// The thread a reader runs on. Readers parse whatever is in the folder and may panic on it; see
 /// [`quiet_reader_panics`].
@@ -38,10 +40,12 @@ pub(crate) enum Text {
     None,
     /// `reader` applies and failed.
     Failed { reader: &'static str, why: String },
+    /// A scan or a picture, and OCR is not installed.
+    AwaitingOcr,
 }
 
-/// Read the text of the file at `path`.
-pub(crate) fn read(path: &Path) -> std::io::Result<Text> {
+/// Read the text of the file at `path`, scans and pictures through `ocr` when there is one.
+pub(crate) fn read(path: &Path, ocr: Option<&Ocr>) -> std::io::Result<Text> {
     let mut bytes = Vec::new();
     read::open(path)?
         .take(MAX_FILE + 1)
@@ -53,29 +57,37 @@ pub(crate) fn read(path: &Path) -> std::io::Result<Text> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    Ok(of(&name, &bytes))
+    Ok(of(&name, &bytes, ocr))
 }
 
-fn of(name: &str, bytes: &[u8]) -> Text {
+fn of(name: &str, bytes: &[u8], ocr: Option<&Ocr>) -> Text {
+    if ocr::is_picture(bytes) {
+        return match ocr {
+            Some(ocr) => read_by("ocr", Some(ocr.picture(bytes))),
+            None => Text::AwaitingOcr,
+        };
+    }
+    if bytes.starts_with(b"%PDF-") {
+        let layer = guarded(|| pdf(bytes));
+        // A text layer that will not read may still be a scan's pages.
+        if !matches!(&layer, Some(Ok(text)) if !ocr::is_scan(text)) {
+            return match ocr.filter(|o| o.reads_pdf()) {
+                Some(ocr) => read_by("ocr", Some(ocr.pdf(bytes))),
+                None if matches!(&layer, Some(Ok(_))) => Text::AwaitingOcr,
+                None => read_by("pdf", layer),
+            };
+        }
+        return read_by("pdf", layer);
+    }
     let (reader, got): (&'static str, Option<Result<String, String>>) =
-        if bytes.starts_with(b"%PDF-") {
-            ("pdf", guarded(|| pdf(bytes)))
-        } else if let Some(size) = unpacked(bytes).filter(|&size| size > MAX_UNPACKED) {
+        if let Some(size) = unpacked(bytes).filter(|&size| size > MAX_UNPACKED) {
             let why = format!("it unpacks to {} MiB, more than clerk reads", size >> 20);
             ("grind", Some(Err(why)))
         } else {
             ("grind", guarded(|| grind_open::text(name, bytes)).flatten())
         };
     match got {
-        Some(Ok(text)) => Text::Read {
-            reader,
-            text: capped(text),
-        },
-        Some(Err(why)) => Text::Failed { reader, why },
-        None if reader == "pdf" => Text::Failed {
-            reader,
-            why: "the reader stopped on this file".to_owned(),
-        },
+        Some(_) => read_by(reader, got),
         None => match plain(bytes) {
             Some(text) => Text::Read {
                 reader: "plain",
@@ -98,6 +110,21 @@ fn unpacked(bytes: &[u8]) -> Option<u64> {
             .filter_map(|i| archive.by_index_raw(i).ok().map(|part| part.size()))
             .fold(0, u64::saturating_add),
     )
+}
+
+/// What `reader` gave, `None` if it panicked.
+fn read_by(reader: &'static str, got: Option<Result<String, String>>) -> Text {
+    match got {
+        Some(Ok(text)) => Text::Read {
+            reader,
+            text: capped(text),
+        },
+        Some(Err(why)) => Text::Failed { reader, why },
+        None => Text::Failed {
+            reader,
+            why: "the reader stopped on this file".to_owned(),
+        },
+    }
 }
 
 fn pdf(bytes: &[u8]) -> Result<String, String> {
@@ -154,20 +181,20 @@ mod tests {
     #[test]
     fn plain_text_is_utf8_without_nul() {
         assert_eq!(
-            of("a.txt", "Grüße\n".as_bytes()),
+            of("a.txt", "Grüße\n".as_bytes(), None),
             Text::Read {
                 reader: "plain",
                 text: "Grüße\n".into()
             }
         );
-        assert_eq!(of("a.bin", b"\x00\x01\x02"), Text::None);
-        assert_eq!(of("a.txt", b"\xff\xfe latin"), Text::None);
+        assert_eq!(of("a.bin", b"\x00\x01\x02", None), Text::None);
+        assert_eq!(of("a.txt", b"\xff\xfe latin", None), Text::None);
     }
 
     #[test]
     fn a_broken_pdf_fails_without_a_panic_escaping() {
         quiet_reader_panics();
-        match of("x.pdf", b"%PDF-1.7 nothing after") {
+        match of("x.pdf", b"%PDF-1.7 nothing after", None) {
             Text::Failed { reader: "pdf", .. } => {}
             other => panic!("{other:?}"),
         }
@@ -188,7 +215,7 @@ mod tests {
             zip.write_all(&chunk).unwrap();
         }
         let bytes = zip.finish().unwrap().into_inner();
-        match of("bomb.odt", &bytes) {
+        match of("bomb.odt", &bytes, None) {
             Text::Failed { why, .. } => assert!(why.contains("65 MiB"), "{why}"),
             other => panic!("{other:?}"),
         }

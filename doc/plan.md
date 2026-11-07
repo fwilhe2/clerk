@@ -91,7 +91,7 @@ their bytes and hands back a document. Both projects are AGPL-3.0-or-later.
 | **M0** | Workspace, this plan, C1 and C2 guards | `cargo test` holds both |
 | **M1** | `clerk scan`, `find` by name, `where`, `status`; moves, copies and changes recorded | A moved file keeps its history |
 | **M2** | Text: PDFs with a text layer, ODF and OOXML through grind's readers (a whole-text call added to grind first), plain text; full-text search (FTS5) | `clerk find` finds a word inside a statement |
-| **M3** | OCR for scans, through the system's `tesseract`, into the index only | A scanned letter is found by a word in it |
+| **M3** | OCR for scans and pictures, through the system's `tesseract` (and poppler's `pdftoppm` for a PDF's pages), into the index only; without them a scan waits and is read once they are installed | A scanned letter is found by a word in it |
 | **M4** | Suggestions: filename templates learned from where files already are; `clerk inbox ~/Downloads` | A bank statement in Downloads is offered its folder, with the reason |
 | **M5** | Moves: accept a suggestion, the journal, `clerk undo` | A move can be undone, and never overwrites |
 | **M6** | Watching while open (inotify), a GUI | — |
