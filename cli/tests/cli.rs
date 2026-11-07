@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! The `clerk` binary, end to end: scan, find, where, text and status.
+//! The `clerk` binary, end to end.
 
 use std::fs;
 use std::process::{Command, Output};
@@ -186,4 +186,40 @@ fn inbox_suggests_a_folder_and_says_why() {
         said.contains("Kontoauszug_1 copy.txt\tis already at"),
         "{said}"
     );
+
+    let new = downloads.join("Kontoauszug_4_2026-04.txt");
+    let copy = downloads.join("Kontoauszug_1 copy.txt");
+    let filed = ok(clerk(
+        &index,
+        &["file", new.to_str().unwrap(), copy.to_str().unwrap()],
+    ));
+    assert!(filed.contains("moved\t"), "{filed}");
+    assert!(filed.contains("left\t"), "the copy stays: {filed}");
+    assert!(bank.join("Kontoauszug_4_2026-04.txt").exists() && !new.exists());
+    assert!(copy.exists());
+    let journal = ok(clerk(&index, &["journal"]));
+    assert_eq!(journal.lines().count(), 1, "{journal}");
+
+    let undone = ok(clerk(&index, &["undo"]));
+    assert!(undone.starts_with("moved back\t"), "{undone}");
+    assert!(new.exists() && !bank.join("Kontoauszug_4_2026-04.txt").exists());
+    assert!(ok(clerk(&index, &["journal"])).contains("\tundone "));
+    assert!(
+        !clerk(&index, &["undo"]).status.success(),
+        "nothing left to undo"
+    );
+
+    fs::write(bank.join("Kontoauszug_4_2026-04.txt"), "someone else's").unwrap();
+    let refused = clerk(
+        &index,
+        &[
+            "move",
+            new.to_str().unwrap(),
+            "--to",
+            bank.to_str().unwrap(),
+        ],
+    );
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("does not replace"));
+    assert_eq!(fs::read_to_string(&new).unwrap(), "4");
 }

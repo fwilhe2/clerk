@@ -18,6 +18,17 @@ pub enum Error {
     },
     /// An index written by a newer clerk.
     NewerIndex(i64),
+    NotAFile(PathBuf),
+    /// A move would take a name in use; clerk never replaces a file (C5).
+    Exists(PathBuf),
+    /// A move would cross to another file system, which it does only when told to.
+    AcrossFileSystems {
+        from: PathBuf,
+        to: PathBuf,
+    },
+    /// The file is not what clerk moved: it changed since, or did not copy true.
+    Changed(PathBuf),
+    NothingToUndo,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -39,6 +50,25 @@ impl fmt::Display for Error {
                 f,
                 "the index was written by a newer clerk (format {version}); update clerk"
             ),
+            Error::NotAFile(path) => write!(f, "{} is not a file", path.display()),
+            Error::Exists(path) => write!(
+                f,
+                "{} is already there, and clerk does not replace a file",
+                path.display()
+            ),
+            Error::AcrossFileSystems { from, to } => write!(
+                f,
+                "{} and {} are on different file systems; moving means copying and removing \
+                 the original, which clerk does with --across",
+                from.display(),
+                to.parent().unwrap_or(to).display()
+            ),
+            Error::Changed(path) => write!(
+                f,
+                "{} is not the file clerk moved: it changed since, so it is left alone",
+                path.display()
+            ),
+            Error::NothingToUndo => write!(f, "there is no move to undo"),
         }
     }
 }

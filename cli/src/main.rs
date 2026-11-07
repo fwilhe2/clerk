@@ -65,6 +65,40 @@ enum Command {
         /// The folder to look at, ~/Downloads if none is named
         folder: Option<PathBuf>,
     },
+    /// Move files into a folder, keeping their names
+    ///
+    /// A file already there by that name is never replaced, and every move can be undone with
+    /// clerk undo.
+    Move {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        /// The folder to move them into
+        #[arg(long, short)]
+        to: PathBuf,
+        /// Allow moving to another drive or file system, by copying, checking the copy, and
+        /// then removing the original
+        #[arg(long)]
+        across: bool,
+    },
+    /// Move files to where clerk inbox suggests
+    ///
+    /// A file with no suggestion, or already in your documents, is left where it is. Every
+    /// move can be undone with clerk undo.
+    File {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        /// Allow moving to another drive or file system, by copying, checking the copy, and
+        /// then removing the original
+        #[arg(long)]
+        across: bool,
+    },
+    /// Undo the last move clerk made
+    ///
+    /// Run it again to undo the one before. A file that changed since it was moved, or whose
+    /// old place is taken, is left alone.
+    Undo,
+    /// Every move clerk made, and which were undone
+    Journal,
     /// What is indexed, and when it was last scanned
     Status,
 }
@@ -181,6 +215,49 @@ fn run(cli: Cli) -> Result<(), String> {
             }
             Ok(())
         }
+        Command::Move { files, to, across } => {
+            let mut failed = false;
+            for file in files {
+                match index.move_file(&file, &to, across) {
+                    Ok(done) => {
+                        println!("moved\t{}\tfrom {}", done.to.display(), done.from.display())
+                    }
+                    Err(e) => {
+                        eprintln!("clerk: {e}");
+                        failed = true;
+                    }
+                }
+            }
+            match failed {
+                true => Err("not every file was moved".to_owned()),
+                false => Ok(()),
+            }
+        }
+        Command::File { files, across } => file_all(&mut index, files, across),
+        Command::Undo => {
+            let undone = index.undo().map_err(|e| e.to_string())?;
+            println!(
+                "moved back\t{}\tfrom {}",
+                undone.from.display(),
+                undone.to.display()
+            );
+            Ok(())
+        }
+        Command::Journal => {
+            for done in index.journal().map_err(|e| e.to_string())? {
+                let undone = done
+                    .undone
+                    .map(|at| format!("\tundone {}", format_utc(at)))
+                    .unwrap_or_default();
+                println!(
+                    "{}\t{}\tfrom {}{undone}",
+                    format_utc(done.at),
+                    done.to.display(),
+                    done.from.display()
+                );
+            }
+            Ok(())
+        }
         Command::Status => {
             let status = index.status().map_err(|e| e.to_string())?;
             println!("index\t{}", status.index.display());
@@ -200,6 +277,46 @@ fn run(cli: Cli) -> Result<(), String> {
             }
             Ok(())
         }
+    }
+}
+
+/// Move each of `files` to where clerk suggests, saying what it did and did not do.
+fn file_all(index: &mut Index, files: Vec<PathBuf>, across: bool) -> Result<(), String> {
+    let mut failed = false;
+    for path in files {
+        let path = path
+            .canonicalize()
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        let inbox = path.parent().ok_or("a file has a folder")?;
+        let advice = index
+            .inbox(inbox)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|item| item.path == path)
+            .map(|item| item.advice)
+            .ok_or_else(|| format!("{} is not a file", path.display()))?;
+        match advice {
+            Advice::Suggest { folder, reason } => match index.move_file(&path, &folder, across) {
+                Ok(done) => {
+                    println!("moved\t{}\tfrom {}", done.to.display(), done.from.display());
+                    println!("\t{reason}");
+                }
+                Err(e) => {
+                    eprintln!("clerk: {e}");
+                    failed = true;
+                }
+            },
+            Advice::Known(paths) => println!(
+                "left\t{}\talready at {}",
+                path.display(),
+                paths[0].display()
+            ),
+            Advice::Nothing => println!("left\t{}\tno suggestion", path.display()),
+        }
+    }
+    match failed {
+        true => Err("not every file was moved".to_owned()),
+        false => Ok(()),
     }
 }
 

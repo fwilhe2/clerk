@@ -68,6 +68,19 @@ const MIGRATIONS: &[&str] = &[
     -- A scan or a picture read when OCR is installed, and not before.
     ALTER TABLE texts ADD COLUMN awaiting_ocr INTEGER NOT NULL DEFAULT 0;
 "#,
+    r#"
+    -- Every move clerk made, which `clerk undo` reverses.
+    CREATE TABLE moves (
+        id INTEGER PRIMARY KEY,
+        at INTEGER NOT NULL,
+        hash BLOB NOT NULL,
+        from_path BLOB NOT NULL,
+        to_path BLOB NOT NULL,
+        -- Across file systems, by copying and removing the original.
+        copied INTEGER NOT NULL,
+        undone INTEGER
+    );
+"#,
 ];
 
 pub struct Index {

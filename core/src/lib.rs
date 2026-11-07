@@ -7,6 +7,7 @@
 
 mod error;
 mod index;
+mod moves;
 mod ocr;
 mod read;
 mod scan;
@@ -16,6 +17,7 @@ mod time;
 
 pub use error::{Error, Result};
 pub use index::{DocumentText, Event, EventKind, Found, Index, RootStatus, Status};
+pub use moves::Move;
 pub use read::{Hash, hash_file};
 pub use scan::{Progress, Report};
 pub use suggest::{Advice, InboxItem, Reason, template};

@@ -252,6 +252,7 @@ version = "0.0.0"
 dependencies = [
  "blake3",
  "grind-open",
+ "libc",
  "pdf-extract",
  "rusqlite",
  "tempfile",

@@ -19,7 +19,8 @@ Like paperless, but an app, with no setup, and a guest in the folder rather than
   folder that contains it. `core/tests/guest.rs` snapshots a folder before and after.
 - **C2 — local only.** No network, not even as an option. `cli/tests/local_only.rs`.
 - **C3 — no setup.** `clerk scan ~/Documents` is the setup.
-- **C5 — a move is the person's**, never overwrites, and can be undone.
+- **C5 — a move is the person's**, never overwrites, and can be undone (`core/src/moves.rs`,
+  `core/tests/moves.rs`).
 
 A document is its content (BLAKE3); a path is where it is now. Its text belongs to the content
 too: read once per document (`core/src/text.rs`), kept in an FTS5 trigram table, and read again
