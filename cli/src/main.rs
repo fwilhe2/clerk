@@ -283,19 +283,9 @@ fn run(cli: Cli) -> Result<(), String> {
 /// Move each of `files` to where clerk suggests, saying what it did and did not do.
 fn file_all(index: &mut Index, files: Vec<PathBuf>, across: bool) -> Result<(), String> {
     let mut failed = false;
-    for path in files {
-        let path = path
-            .canonicalize()
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-        let inbox = path.parent().ok_or("a file has a folder")?;
-        let advice = index
-            .inbox(inbox)
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .find(|item| item.path == path)
-            .map(|item| item.advice)
-            .ok_or_else(|| format!("{} is not a file", path.display()))?;
-        match advice {
+    for item in index.advise(&files).map_err(|e| e.to_string())? {
+        let path = item.path;
+        match item.advice {
             Advice::Suggest { folder, reason } => match index.move_file(&path, &folder, across) {
                 Ok(done) => {
                     println!("moved\t{}\tfrom {}", done.to.display(), done.from.display());

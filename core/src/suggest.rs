@@ -12,11 +12,15 @@ use std::path::{Path, PathBuf};
 
 use crate::index::{Index, hash_of};
 use crate::ocr::Ocr;
-use crate::text::{self, Text};
+use crate::text::Text;
 use crate::{Hash, Result, read};
 
-/// A folder must hold at least this many files like the new one.
-const MIN_THERE: usize = 2;
+/// A folder must hold at least this many files named like the new one: a template is specific
+/// enough that two make a habit.
+const MIN_NAMED: usize = 2;
+
+/// Or this many documents sharing a word with it; two sharing a word is often chance.
+const MIN_SHARING: usize = 3;
 
 /// And at least this share, in tenths, of all the files like it.
 const MIN_SHARE: usize = 8;
@@ -149,8 +153,8 @@ fn date(chars: &[char]) -> Option<usize> {
 }
 
 /// The folder holding most of `folders` — each a document's or a file's folder — if it holds
-/// enough of them, and how many.
-fn best(folders: &[PathBuf]) -> Option<(PathBuf, usize)> {
+/// at least `min` and most of them, and how many.
+fn best(folders: &[PathBuf], min: usize) -> Option<(PathBuf, usize)> {
     let mut counts: HashMap<&PathBuf, usize> = HashMap::new();
     for folder in folders {
         *counts.entry(folder).or_default() += 1;
@@ -158,7 +162,7 @@ fn best(folders: &[PathBuf]) -> Option<(PathBuf, usize)> {
     let (folder, there) = counts
         .into_iter()
         .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(a.0)))?;
-    (there >= MIN_THERE && there * 10 >= folders.len() * MIN_SHARE).then(|| (folder.clone(), there))
+    (there >= min && there * 10 >= folders.len() * MIN_SHARE).then(|| (folder.clone(), there))
 }
 
 /// The words of a text worth looking up: five characters or more, longest first, each once.
@@ -190,12 +194,24 @@ impl Index {
             .map(|e| e.path())
             .collect();
         paths.sort();
+        self.advise(&paths)
+    }
 
-        // What is filed: every file outside the inbox, by template, and every document's folders.
+    /// What clerk has to say about each of `files`, as [`Index::inbox`] says it. The folders
+    /// they are in are not learned from.
+    pub fn advise(&self, files: &[PathBuf]) -> Result<Vec<InboxItem>> {
+        let paths: Vec<PathBuf> = files
+            .iter()
+            .map(|f| f.canonicalize().map_err(|e| crate::Error::Io(f.clone(), e)))
+            .collect::<Result<_>>()?;
+        let inboxes: HashSet<&Path> = paths.iter().filter_map(|p| p.parent()).collect();
+
+        // What is filed: every file outside the inboxes, by template, and every document's
+        // folders.
         let mut by_template: HashMap<String, (String, Vec<PathBuf>)> = HashMap::new();
         let mut folders_of: HashMap<Hash, Vec<PathBuf>> = HashMap::new();
         for (path, hash, ..) in self.files()? {
-            let Some(folder) = path.parent().filter(|f| *f != inbox) else {
+            let Some(folder) = path.parent().filter(|f| !inboxes.contains(f)) else {
                 continue;
             };
             let name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -210,52 +226,80 @@ impl Index {
             }
         }
 
-        let ocr = Ocr::find();
+        // By content and by name first; what that leaves is read for its text, on every core,
+        // as a scan reads.
+        let mut advice: Vec<Option<Advice>> = Vec::with_capacity(paths.len());
+        let mut unread: Vec<(Hash, PathBuf)> = Vec::new();
+        for path in &paths {
+            let said = match read::hash_file(path) {
+                Ok(hash) => {
+                    let said = self.by_name(hash, path, &inboxes, &by_template)?;
+                    if said.is_none() {
+                        unread.push((hash, path.clone()));
+                    }
+                    said
+                }
+                Err(_) => Some(Advice::Nothing),
+            };
+            advice.push(said);
+        }
+        let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let texts: HashMap<PathBuf, Text> =
+            crate::scan::read_all(unread, workers, Ocr::find().as_ref())
+                .into_iter()
+                .map(|(_, path, text)| (path, text))
+                .collect();
         let mut items = Vec::with_capacity(paths.len());
-        for path in paths {
-            let advice = self.advise(&path, &inbox, &by_template, &folders_of, ocr.as_ref())?;
+        for (path, said) in paths.into_iter().zip(advice) {
+            let advice = match said {
+                Some(advice) => advice,
+                None => match texts.get(&path) {
+                    Some(Text::Read { text, .. }) => self.by_text(text, &folders_of)?,
+                    _ => Advice::Nothing,
+                },
+            };
             items.push(InboxItem { path, advice });
         }
         Ok(items)
     }
 
-    fn advise(
+    /// Where the file `path`, whose content is `hash`, is already, or where files named like it
+    /// are; `None` when neither says.
+    fn by_name(
         &self,
+        hash: Hash,
         path: &Path,
-        inbox: &Path,
+        inboxes: &HashSet<&Path>,
         by_template: &HashMap<String, (String, Vec<PathBuf>)>,
-        folders_of: &HashMap<Hash, Vec<PathBuf>>,
-        ocr: Option<&Ocr>,
-    ) -> Result<Advice> {
-        let Ok(hash) = read::hash_file(path) else {
-            return Ok(Advice::Nothing);
-        };
+    ) -> Result<Option<Advice>> {
         let known: Vec<PathBuf> = self
             .paths_of(&hash)?
             .into_iter()
-            .filter(|p| p.parent() != Some(inbox))
+            .filter(|p| !p.parent().is_some_and(|f| inboxes.contains(f)))
             .collect();
         if !known.is_empty() {
-            return Ok(Advice::Known(known));
+            return Ok(Some(Advice::Known(known)));
         }
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         if let Some((shown, folders)) = by_template.get(&template(&name).to_lowercase())
-            && let Some((folder, there)) = best(folders)
+            && let Some((folder, there)) = best(folders, MIN_NAMED)
         {
-            return Ok(Advice::Suggest {
+            return Ok(Some(Advice::Suggest {
                 folder,
                 reason: Reason::Name {
                     template: shown.clone(),
                     there,
                     of: folders.len(),
                 },
-            });
+            }));
         }
-        let Ok(Text::Read { text, .. }) = text::read(path, ocr) else {
-            return Ok(Advice::Nothing);
-        };
+        Ok(None)
+    }
+
+    /// Where the documents are that share a word of `text` no other folder's documents have.
+    fn by_text(&self, text: &str, folders_of: &HashMap<Hash, Vec<PathBuf>>) -> Result<Advice> {
         let mut found: Option<(PathBuf, Reason)> = None;
-        for word in words(&text) {
+        for word in words(text) {
             let hashes = self.documents_containing(&word)?;
             if hashes.len() > MAX_HITS {
                 continue;
@@ -266,7 +310,7 @@ impl Index {
                 .flatten()
                 .cloned()
                 .collect();
-            let Some((folder, there)) = best(&folders) else {
+            let Some((folder, there)) = best(&folders, MIN_SHARING) else {
                 continue;
             };
             // More documents first; on a tie an identifier, a customer or account number, says
@@ -333,15 +377,16 @@ mod tests {
         let a = PathBuf::from("/d/a");
         let b = PathBuf::from("/d/b");
         assert_eq!(
-            best(&[a.clone(), a.clone(), a.clone(), b.clone()]),
+            best(&[a.clone(), a.clone(), a.clone(), b.clone()], 2),
             None,
             "three of four is not enough"
         );
         assert_eq!(
-            best(&[a.clone(), a.clone(), a.clone(), a.clone(), b.clone()]),
+            best(&[a.clone(), a.clone(), a.clone(), a.clone(), b.clone()], 2),
             Some((a.clone(), 4))
         );
-        assert_eq!(best(std::slice::from_ref(&a)), None, "one is not a habit");
+        assert_eq!(best(std::slice::from_ref(&a), 1), Some((a.clone(), 1)));
+        assert_eq!(best(&[a.clone(), a.clone()], 3), None, "too few");
     }
 
     #[test]

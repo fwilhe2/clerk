@@ -147,3 +147,23 @@ fn a_file_already_filed_is_said_to_be_and_an_unclear_one_gets_nothing() {
         "pictures named IMG_<n> are in two folders alike"
     );
 }
+
+#[test]
+fn two_documents_sharing_a_word_are_not_yet_a_habit() {
+    let (_dir, docs, downloads, mut index) = setup();
+    write(&docs, "Gesundheit/a.txt", b"Lindenhofklinik, Befund");
+    write(&docs, "Gesundheit/b.txt", b"Lindenhofklinik, Rechnung");
+    index.scan(&docs, |_| {}).unwrap();
+    write(&downloads, "brief.txt", b"Termin in der Lindenhofklinik");
+    assert_eq!(advice(&index, &downloads, "brief.txt"), Advice::Nothing);
+
+    write(&docs, "Gesundheit/c.txt", b"Lindenhofklinik, Termin");
+    index.scan(&docs, |_| {}).unwrap();
+    assert!(matches!(
+        advice(&index, &downloads, "brief.txt"),
+        Advice::Suggest {
+            reason: Reason::Word { there: 3, .. },
+            ..
+        }
+    ));
+}

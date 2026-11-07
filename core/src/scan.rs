@@ -376,8 +376,8 @@ impl Index {
 }
 
 /// Read the text of every document in `batch`, on `workers` threads. One that cannot be opened
-/// now is left out: the scan has said so, and the next one tries again.
-fn read_all(
+/// now is left out.
+pub(crate) fn read_all(
     batch: Vec<(Hash, PathBuf)>,
     workers: usize,
     ocr: Option<&Ocr>,
