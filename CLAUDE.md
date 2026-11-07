@@ -42,6 +42,11 @@ Use `--index` (or `CLERK_INDEX`) when trying it, so the person's own index is no
 | `clerk-core` | `core/` | The index (SQLite, migrations by `user_version`), scanning, identity, history, search |
 | `clerk-cli` | `cli/` | The `clerk` binary; calls the core and owns nothing |
 
+Office documents are read through grind's crates, a git dependency on grind's `main`
+(`doc/plan.md`, "Depending on grind"). A change both need lands in grind first; to build against
+the checkout at `../grind` meanwhile, use the uncommitted `.cargo/config.toml` patch described
+there, and remove it before committing.
+
 A schema change is a new entry in `MIGRATIONS` (`core/src/index.rs`), never an edit of an old
 one: an index on disk was made by the old one.
 

@@ -1,1 +1,3 @@
 /target
+# A local [patch] onto ../grind (doc/plan.md, "Depending on grind").
+/.cargo/config.toml

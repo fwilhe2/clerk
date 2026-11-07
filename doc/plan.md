@@ -55,13 +55,41 @@ can do, the CLI can do.
 | `clerk-core` | `core/` | The index (SQLite), scanning, identity, history, search |
 | `clerk-cli` | `cli/` | The `clerk` binary |
 
+## Depending on grind
+
+Office documents are read by [grind](https://github.com/fwilhe2/grind)'s readers, the same ones
+its word processor and spreadsheet use: `grind-open` tells ODF, `.docx` and `.xlsx` apart by
+their bytes and hands back a document. Both projects are AGPL-3.0-or-later.
+
+- **A git dependency on `main`**, since grind has no release:
+  `grind-open = { git = "https://github.com/fwilhe2/grind", branch = "main" }`. Nothing is
+  published; grind's crates are `0.0.0` and cargo finds them by name in grind's workspace.
+- **`Cargo.lock` pins the commit.** clerk moves to grind's latest `main` only on
+  `cargo update -p grind-open`, run on purpose and followed by the tests.
+- **Working on both at once:** a `.cargo/config.toml` that is never committed (`.gitignore`
+  names it) points clerk at the checkout next to it:
+
+  ```toml
+  [patch."https://github.com/fwilhe2/grind"]
+  grind-open = { path = "../grind/open" }
+  grind-core = { path = "../grind/core" }
+  grind-sheet = { path = "../grind/sheet" }
+  grind-text = { path = "../grind/text" }
+  ```
+
+  The change lands in grind first; clerk then updates to it without the patch.
+- **C2 still holds:** cargo fetches grind when building, and grind's own guard (its R12) keeps
+  network crates out of it, which `cli/tests/local_only.rs` checks again in clerk's lockfile.
+- **What is missing in grind:** a call that returns all of a document's text, in reading order.
+  Getting it from viewports would be clerk working around grind; it belongs in grind (M2).
+
 ## Milestones
 
 | | What | Done when |
 |---|---|---|
 | **M0** | Workspace, this plan, C1 and C2 guards | `cargo test` holds both |
 | **M1** | `clerk scan`, `find` by name, `where`, `status`; moves, copies and changes recorded | A moved file keeps its history |
-| **M2** | Text: PDFs with a text layer, ODF and OOXML through grind's readers, plain text; full-text search (FTS5) | `clerk find` finds a word inside a statement |
+| **M2** | Text: PDFs with a text layer, ODF and OOXML through grind's readers (a whole-text call added to grind first), plain text; full-text search (FTS5) | `clerk find` finds a word inside a statement |
 | **M3** | OCR for scans, through the system's `tesseract`, into the index only | A scanned letter is found by a word in it |
 | **M4** | Suggestions: filename templates learned from where files already are; `clerk inbox ~/Downloads` | A bank statement in Downloads is offered its folder, with the reason |
 | **M5** | Moves: accept a suggestion, the journal, `clerk undo` | A move can be undone, and never overwrites |
