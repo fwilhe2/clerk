@@ -5,6 +5,7 @@
 //! The index: one SQLite file outside every directory it indexes (C4). Paths are stored as the
 //! system's bytes, so a name that is not UTF-8 survives.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, params};
@@ -12,7 +13,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::{Error, Hash, Result};
 
 /// What [`Index::open`] migrates to. Each step is one entry of [`MIGRATIONS`].
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
     CREATE TABLE roots (
         path BLOB PRIMARY KEY,
         added INTEGER NOT NULL
@@ -45,7 +47,24 @@ const MIGRATIONS: &[&str] = &[r#"
         finished INTEGER NOT NULL,
         files INTEGER NOT NULL
     );
-"#];
+"#,
+    r#"
+    CREATE TABLE texts (
+        id INTEGER PRIMARY KEY,
+        hash BLOB NOT NULL UNIQUE REFERENCES documents(hash),
+        -- Which reader gave the text, or failed; NULL when none applies.
+        reader TEXT,
+        -- crate::text::READERS when it was read.
+        readers INTEGER NOT NULL,
+        failed TEXT
+    );
+    -- The text of texts row `rowid`. Trigrams, so a word is found inside a compound.
+    CREATE VIRTUAL TABLE text_search USING fts5(
+        body,
+        tokenize = 'trigram remove_diacritics 1'
+    );
+"#,
+];
 
 pub struct Index {
     pub(crate) conn: Connection,
@@ -59,6 +78,26 @@ pub struct Found {
     pub path: PathBuf,
     pub hash: Hash,
     pub size: u64,
+    /// Where in its text a word was found, `[marked]`, when one was found there rather than in
+    /// the path.
+    pub context: Option<String>,
+}
+
+/// What the index holds of a document's text, from [`Index::text`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DocumentText {
+    /// Not read yet: it was not seen by a scan, or a scan stopped first.
+    Unread,
+    /// No reader applies to it.
+    None,
+    Read {
+        reader: String,
+        text: String,
+    },
+    Failed {
+        reader: String,
+        why: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,6 +162,8 @@ pub struct Status {
     pub roots: Vec<RootStatus>,
     pub files: usize,
     pub documents: usize,
+    /// Documents in a folder whose text was read and can be searched.
+    pub with_text: usize,
 }
 
 #[cfg(unix)]
@@ -220,28 +261,92 @@ impl Index {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// The files whose path, below the directory it was scanned from, contains every one of
-    /// `words`, ignoring case.
+    /// The files where every one of `words` is found, ignoring case: in the path below the
+    /// directory it was scanned from, or in the document's text. A word in the text is matched
+    /// inside longer words too, as in the path.
     pub fn find(&self, words: &[&str]) -> Result<Vec<Found>> {
         let roots = self.roots()?;
         let words: Vec<String> = words.iter().map(|w| w.to_lowercase()).collect();
+        let in_text: Vec<HashMap<Hash, String>> = words
+            .iter()
+            .map(|w| self.text_matches(w))
+            .collect::<Result<_>>()?;
         let mut found: Vec<Found> = self
             .files()?
             .into_iter()
-            .filter(|(path, ..)| {
+            .filter_map(|(path, hash, size, _)| {
                 let below = roots
                     .iter()
                     .filter(|root| path.starts_with(root))
                     .max_by_key(|root| root.as_os_str().len())
                     .and_then(|root| path.strip_prefix(root).ok())
-                    .unwrap_or(path);
-                let text = below.to_string_lossy().to_lowercase();
-                words.iter().all(|w| text.contains(w.as_str()))
+                    .unwrap_or(&path);
+                let name = below.to_string_lossy().to_lowercase();
+                let mut context = None;
+                for (word, text) in words.iter().zip(&in_text) {
+                    if name.contains(word.as_str()) {
+                        continue;
+                    }
+                    context.get_or_insert(text.get(&hash)?.clone());
+                }
+                Some(Found {
+                    path,
+                    hash,
+                    size,
+                    context,
+                })
             })
-            .map(|(path, hash, size, _)| Found { path, hash, size })
             .collect();
         found.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(found)
+    }
+
+    /// The documents whose text contains `word`, each with where; a token is a trigram, so the
+    /// 64 a snippet allows are about as many characters. Trigrams need three characters, so a
+    /// shorter word is looked for in paths only.
+    fn text_matches(&self, word: &str) -> Result<HashMap<Hash, String>> {
+        if word.chars().count() < 3 {
+            return Ok(HashMap::new());
+        }
+        let query = format!("\"{}\"", word.replace('"', "\"\""));
+        let mut stmt = self.conn.prepare(
+            "SELECT t.hash, snippet(text_search, 0, '[', ']', '…', 64) \
+             FROM text_search JOIN texts t ON t.id = text_search.rowid \
+             WHERE text_search MATCH ?1",
+        )?;
+        let rows = stmt.query_map([query], |r| {
+            let context: String = r.get(1)?;
+            Ok((hash_of(r.get(0)?)?, one_line(&context)))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// What the index holds of the text of the document `hash`.
+    pub fn text(&self, hash: &Hash) -> Result<DocumentText> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT t.reader, t.failed, s.body FROM texts t \
+                 LEFT JOIN text_search s ON s.rowid = t.id WHERE t.hash = ?1",
+                [&hash.0[..]],
+                |r| {
+                    Ok((
+                        r.get::<_, Option<String>>(0)?,
+                        r.get::<_, Option<String>>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        Ok(match row {
+            None => DocumentText::Unread,
+            Some((None, ..)) => DocumentText::None,
+            Some((Some(reader), Some(why), _)) => DocumentText::Failed { reader, why },
+            Some((Some(reader), None, text)) => DocumentText::Read {
+                reader,
+                text: text.unwrap_or_default(),
+            },
+        })
     }
 
     /// Every path the document `hash` is at now.
@@ -296,11 +401,18 @@ impl Index {
         let documents: i64 =
             self.conn
                 .query_row("SELECT count(DISTINCT hash) FROM files", [], |r| r.get(0))?;
+        let with_text: i64 = self.conn.query_row(
+            "SELECT count(*) FROM texts t JOIN text_search s ON s.rowid = t.id \
+             WHERE t.hash IN (SELECT hash FROM files)",
+            [],
+            |r| r.get(0),
+        )?;
         Ok(Status {
             index: self.file.clone(),
             roots,
             files: files.len(),
             documents: documents as usize,
+            with_text: with_text as usize,
         })
     }
 
@@ -318,4 +430,9 @@ impl Index {
         )?;
         Ok(())
     }
+}
+
+/// A snippet on one line: the text's own line breaks and runs of spaces as single spaces.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }

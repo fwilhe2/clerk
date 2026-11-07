@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use clerk_core::{Index, Report, format_utc, hash_file};
+use clerk_core::{DocumentText, Index, Progress, Report, format_utc, hash_file};
 
 /// Keeps track of your documents, wherever they are in your documents folder. clerk reads your
 /// files and never changes, moves or deletes one unless you ask. Its index is kept outside the
@@ -28,8 +28,8 @@ struct Cli {
 enum Command {
     /// Index a folder, and remember it
     ///
-    /// The first scan reads every file, which can take a few minutes; later scans read only
-    /// what changed. With no folder, every folder scanned before is scanned again, or
+    /// The first scan reads every file, and the text of every document, which can take a few
+    /// minutes; later scans read only what changed. With no folder, every folder scanned before is scanned again, or
     /// ~/Documents the first time. Hidden files and folders are left out.
     Scan {
         folders: Vec<PathBuf>,
@@ -37,11 +37,21 @@ enum Command {
         #[arg(long, short)]
         verbose: bool,
     },
-    /// Find documents whose path contains every word
+    /// Find documents where every word is in the path or in the text
+    ///
+    /// Case is ignored, and a word is found inside longer words too: "auszug" finds
+    /// "Kontoauszug". In the text, a word needs at least three letters.
     Find {
         #[arg(required = true)]
         words: Vec<String>,
+        /// Show, under each document found by its text, where in the text
+        #[arg(long, short)]
+        context: bool,
     },
+    /// The text clerk read from a document, which is what find searches
+    ///
+    /// The file is recognised by its content, so a copy of it anywhere works too.
+    Text { file: PathBuf },
     /// Where a document is now, and where it has been
     ///
     /// The file is recognised by its content, so a copy of it anywhere works too.
@@ -52,6 +62,7 @@ enum Command {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    clerk_core::quiet_reader_panics();
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
@@ -69,12 +80,36 @@ fn run(cli: Cli) -> Result<(), String> {
     let mut index = Index::open(&file).map_err(|e| e.to_string())?;
     match cli.command {
         Command::Scan { folders, verbose } => scan(&mut index, folders, verbose),
-        Command::Find { words } => {
+        Command::Find { words, context } => {
             let words: Vec<&str> = words.iter().map(String::as_str).collect();
             for found in index.find(&words).map_err(|e| e.to_string())? {
                 println!("{}", found.path.display());
+                if let Some(text) = found.context.filter(|_| context) {
+                    println!("\t{text}");
+                }
             }
             Ok(())
+        }
+        Command::Text { file } => {
+            let hash = hash_file(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+            match index.text(&hash).map_err(|e| e.to_string())? {
+                DocumentText::Read { text, .. } => {
+                    println!("{}", text.trim_end());
+                    Ok(())
+                }
+                DocumentText::Unread => Err(format!(
+                    "{} has not been read; scan the folder it is in",
+                    file.display()
+                )),
+                DocumentText::None => Err(format!(
+                    "{}: clerk does not read text from this kind of file",
+                    file.display()
+                )),
+                DocumentText::Failed { reader, why } => Err(format!(
+                    "{}: its text could not be read ({reader}): {why}",
+                    file.display()
+                )),
+            }
         }
         Command::Where { file } => {
             let hash = hash_file(&file).map_err(|e| format!("{}: {e}", file.display()))?;
@@ -113,6 +148,7 @@ fn run(cli: Cli) -> Result<(), String> {
             println!("index\t{}", status.index.display());
             println!("files\t{}", status.files);
             println!("documents\t{}", status.documents);
+            println!("with text\t{}", status.with_text);
             for root in status.roots {
                 let scanned = root.scanned.map_or("never".to_owned(), format_utc);
                 println!(
@@ -147,9 +183,14 @@ fn scan(index: &mut Index, folders: Vec<PathBuf>, verbose: bool) -> Result<(), S
     let live = std::io::stderr().is_terminal();
     for folder in folders {
         let report = index
-            .scan(&folder, |n| {
+            .scan(&folder, |progress| {
                 if live {
-                    eprint!("\r{} … {n} files", folder.display());
+                    match progress {
+                        Progress::Files(n) => eprint!("\r\x1b[K{} … {n} files", folder.display()),
+                        Progress::Texts(n, of) => {
+                            eprint!("\r\x1b[K{} … text {n} of {of}", folder.display())
+                        }
+                    }
                     let _ = std::io::stderr().flush();
                 }
             })
@@ -174,6 +215,14 @@ fn print_report(report: &Report, verbose: bool) {
         report.changed.len(),
         report.removed.len()
     );
+    println!(
+        "  {} with text{}",
+        report.texts,
+        match report.no_text.len() {
+            0 => String::new(),
+            n => format!(", {n} whose text could not be read"),
+        }
+    );
     if verbose {
         for path in &report.added {
             println!("added\t{}", path.display());
@@ -189,6 +238,9 @@ fn print_report(report: &Report, verbose: bool) {
         }
         for path in &report.removed {
             println!("removed\t{}", path.display());
+        }
+        for (path, why) in &report.no_text {
+            println!("no text\t{}\t{why}", path.display());
         }
     }
     for (path, why) in &report.unreadable {

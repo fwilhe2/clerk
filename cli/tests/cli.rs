@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! The `clerk` binary, end to end: scan, find, where and status.
+//! The `clerk` binary, end to end: scan, find, where, text and status.
 
 use std::fs;
 use std::process::{Command, Output};
@@ -71,6 +71,30 @@ fn a_document_is_found_and_followed_after_a_move() {
         status.contains("files\t1") && status.contains(root_text),
         "{status}"
     );
+
+    fs::write(
+        root.join("Finanzen/Nebenkosten.txt"),
+        "Abrechnung der Nebenkosten 2025\nNachzahlung: 120 EUR\n",
+    )
+    .unwrap();
+    let scanned = ok(clerk(&index, &["scan"]));
+    assert!(scanned.contains("2 with text"), "{scanned}");
+    let found = ok(clerk(&index, &["find", "--context", "nachzahlung"]));
+    let mut lines = found.lines();
+    assert_eq!(lines.next(), root.join("Finanzen/Nebenkosten.txt").to_str());
+    assert!(lines.next().unwrap().contains("[Nachzahlung]"), "{found}");
+    let text = ok(clerk(
+        &index,
+        &[
+            "text",
+            root.join("Finanzen/Nebenkosten.txt").to_str().unwrap(),
+        ],
+    ));
+    assert_eq!(
+        text,
+        "Abrechnung der Nebenkosten 2025\nNachzahlung: 120 EUR\n"
+    );
+    assert!(ok(clerk(&index, &["status"])).contains("with text\t2"));
 
     let unknown = elsewhere.path().join("unknown.pdf");
     fs::write(&unknown, b"never seen").unwrap();

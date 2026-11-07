@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::params;
 
-use crate::index::{Index, key};
+use crate::index::{Index, hash_of, key, path_of};
+use crate::text::{self, Text};
 use crate::{Error, EventKind, Hash, Result, read, time};
 
 /// What a scan found.
@@ -31,6 +32,20 @@ pub struct Report {
     pub removed: Vec<PathBuf>,
     /// What could not be read, and why. A file once indexed and now unreadable is kept.
     pub unreadable: Vec<(PathBuf, String)>,
+    /// Documents whose text was read, now or before, by a reader that applies.
+    pub texts: usize,
+    /// Documents a reader applies to and failed on, and why. Not retried until the readers
+    /// change.
+    pub no_text: Vec<(PathBuf, String)>,
+}
+
+/// How far a scan is, for a shell to show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Progress {
+    /// Files seen so far.
+    Files(usize),
+    /// Documents read for their text so far, of how many.
+    Texts(usize, usize),
 }
 
 struct Seen {
@@ -46,9 +61,9 @@ fn hidden(entry: &walkdir::DirEntry) -> bool {
 }
 
 impl Index {
-    /// Scan `root` and remember it. `progress` is told how many files have been seen so far,
-    /// now and then.
-    pub fn scan(&mut self, root: &Path, mut progress: impl FnMut(usize)) -> Result<Report> {
+    /// Scan `root` and remember it, then read the text of every document in it not read yet.
+    /// `progress` is told how far it is, now and then.
+    pub fn scan(&mut self, root: &Path, mut progress: impl FnMut(Progress)) -> Result<Report> {
         let root = root
             .canonicalize()
             .map_err(|e| Error::Io(root.to_owned(), e))?;
@@ -104,7 +119,7 @@ impl Index {
             }
             report.files += 1;
             if report.files.is_multiple_of(500) {
-                progress(report.files);
+                progress(Progress::Files(report.files));
             }
             let path = entry.into_path();
             let old = before.get(&path).copied();
@@ -158,7 +173,7 @@ impl Index {
                 before: old.map(|(h, ..)| h),
             });
         }
-        progress(report.files);
+        progress(Progress::Files(report.files));
 
         let still: HashSet<&Path> = seen.iter().map(|s| s.path.as_path()).collect();
         let mut gone: Vec<(PathBuf, Hash)> = before
@@ -243,7 +258,7 @@ impl Index {
             let rows = stmt.query_map([], |r| r.get::<_, Vec<u8>>(0))?;
             rows.collect::<rusqlite::Result<Vec<_>>>()?
                 .into_iter()
-                .map(crate::index::path_of)
+                .map(path_of)
                 .collect()
         };
         if !roots.iter().any(|r| root.starts_with(r)) {
@@ -260,6 +275,119 @@ impl Index {
             params![key(&root), started, finished, report.files as i64],
         )?;
         tx.commit()?;
+        self.read_texts(&root, &mut progress, &mut report)?;
         Ok(report)
     }
+
+    /// Read the text of each document below `root` that has none from the current readers,
+    /// committing now and then so a scan that is stopped keeps what it read.
+    fn read_texts(
+        &mut self,
+        root: &Path,
+        progress: &mut impl FnMut(Progress),
+        report: &mut Report,
+    ) -> Result<()> {
+        let mut pending: Vec<(Hash, PathBuf)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT f.hash, f.path, t.readers, t.failed, t.reader FROM files f \
+                 LEFT JOIN texts t ON t.hash = f.hash ORDER BY f.path",
+            )?;
+            let rows = stmt.query_map([], |r| {
+                Ok((
+                    hash_of(r.get(0)?)?,
+                    path_of(r.get(1)?),
+                    r.get::<_, Option<i64>>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, Option<String>>(4)?,
+                ))
+            })?;
+            let mut pending = Vec::new();
+            let mut counted: HashSet<Hash> = HashSet::new();
+            for row in rows {
+                let (hash, path, readers, failed, reader) = row?;
+                if !path.starts_with(root) || !counted.insert(hash) {
+                    continue;
+                }
+                match (readers, failed) {
+                    (Some(r), None) if r >= text::READERS => {
+                        report.texts += usize::from(reader.is_some());
+                    }
+                    (Some(r), Some(why)) if r >= text::READERS => {
+                        report.no_text.push((path, why));
+                    }
+                    _ => pending.push((hash, path)),
+                }
+            }
+            pending
+        };
+        let total = pending.len();
+        let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let mut done = 0;
+        progress(Progress::Texts(done, total));
+        while !pending.is_empty() {
+            let batch: Vec<(Hash, PathBuf)> =
+                pending.drain(..pending.len().min(workers * 8)).collect();
+            done += batch.len();
+            let read = read_all(batch, workers);
+            progress(Progress::Texts(done, total));
+            let tx = self.conn.transaction()?;
+            for (hash, path, got) in read {
+                tx.execute(
+                    "DELETE FROM text_search WHERE rowid = (SELECT id FROM texts WHERE hash = ?1)",
+                    [&hash.0[..]],
+                )?;
+                tx.execute("DELETE FROM texts WHERE hash = ?1", [&hash.0[..]])?;
+                let (reader, failed, body) = match got {
+                    Text::Read { reader, text } => (Some(reader), None, Some(text)),
+                    Text::None => (None, None, None),
+                    Text::Failed { reader, why } => (Some(reader), Some(why), None),
+                };
+                tx.execute(
+                    "INSERT INTO texts (hash, reader, readers, failed) VALUES (?1, ?2, ?3, ?4)",
+                    params![&hash.0[..], reader, text::READERS, failed],
+                )?;
+                if let Some(body) = body {
+                    report.texts += 1;
+                    tx.execute(
+                        "INSERT INTO text_search (rowid, body) VALUES (last_insert_rowid(), ?1)",
+                        [body],
+                    )?;
+                }
+                if let Some(why) = failed {
+                    report.no_text.push((path, why));
+                }
+            }
+            tx.commit()?;
+        }
+        Ok(())
+    }
+}
+
+/// Read the text of every document in `batch`, on `workers` threads. One that cannot be opened
+/// now is left out: the scan has said so, and the next one tries again.
+fn read_all(batch: Vec<(Hash, PathBuf)>, workers: usize) -> Vec<(Hash, PathBuf, Text)> {
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let batch = &batch;
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers.min(batch.len()))
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut read = Vec::new();
+                    loop {
+                        let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some((hash, path)) = batch.get(at) else {
+                            break read;
+                        };
+                        if let Ok(got) = text::read(path) {
+                            read.push((*hash, path.clone(), got));
+                        }
+                    }
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap_or_default())
+            .collect()
+    })
 }

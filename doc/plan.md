@@ -80,8 +80,9 @@ their bytes and hands back a document. Both projects are AGPL-3.0-or-later.
   The change lands in grind first; clerk then updates to it without the patch.
 - **C2 still holds:** cargo fetches grind when building, and grind's own guard (its R12) keeps
   network crates out of it, which `cli/tests/local_only.rs` checks again in clerk's lockfile.
-- **What is missing in grind:** a call that returns all of a document's text, in reading order.
-  Getting it from viewports would be clerk working around grind; it belongs in grind (M2).
+- **What clerk calls:** `grind_open::text(name, bytes)`, all of a document's text in reading
+  order, for anything grind opens. Getting it from viewports would be clerk working around grind,
+  so it lives in grind, beside `grind_text::Document::text` and `grind_sheet::Document::text`.
 
 ## Milestones
 

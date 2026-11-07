@@ -11,6 +11,9 @@ license.workspace = true
 
 [dependencies]
 blake3 = "1"
+# ODF, .docx, .xlsx, CSV and Markdown, read by grind's own readers (doc/plan.md, "Depending on grind").
+grind-open = { git = "https://github.com/fwilhe2/grind", branch = "main" }
+pdf-extract = "0.12"
 # SQLite compiled in, so the index is the same file format on every system.
 rusqlite = { version = "0.37", features = ["bundled"] }
 walkdir = "2"
