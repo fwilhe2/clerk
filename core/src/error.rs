@@ -29,6 +29,10 @@ pub enum Error {
     /// The file is not what clerk moved: it changed since, or did not copy true.
     Changed(PathBuf),
     NothingToUndo,
+    /// Watching needs a folder scanned before.
+    NothingScanned,
+    /// The system would not watch a folder, or stopped watching.
+    Watch(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -69,6 +73,14 @@ impl fmt::Display for Error {
                 path.display()
             ),
             Error::NothingToUndo => write!(f, "there is no move to undo"),
+            Error::NothingScanned => {
+                write!(f, "no folder has been scanned yet; scan one first")
+            }
+            Error::Watch(why) => write!(
+                f,
+                "cannot watch: {why} (on Linux, a folder with very many subfolders may need a \
+                 higher fs.inotify.max_user_watches)"
+            ),
         }
     }
 }

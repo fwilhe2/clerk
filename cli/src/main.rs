@@ -99,6 +99,15 @@ enum Command {
     Undo,
     /// Every move clerk made, and which were undone
     Journal,
+    /// Keep the index current while this runs
+    ///
+    /// Scans every folder scanned before, then scans one again a moment after something in it
+    /// changes, until stopped with Ctrl+C. Hidden files are left out, as in a scan.
+    Watch {
+        /// List every file added, moved, copied, changed or removed
+        #[arg(long, short)]
+        verbose: bool,
+    },
     /// What is indexed, and when it was last scanned
     Status,
 }
@@ -257,6 +266,18 @@ fn run(cli: Cli) -> Result<(), String> {
                 );
             }
             Ok(())
+        }
+        Command::Watch { verbose } => {
+            eprintln!("clerk: watching; stop with Ctrl+C");
+            index
+                .watch(
+                    || false,
+                    |scanned| match scanned {
+                        Ok(report) => print_report(&report, verbose),
+                        Err(e) => eprintln!("clerk: {e}"),
+                    },
+                )
+                .map_err(|e| e.to_string())
         }
         Command::Status => {
             let status = index.status().map_err(|e| e.to_string())?;

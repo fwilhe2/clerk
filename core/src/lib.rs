@@ -14,6 +14,7 @@ mod scan;
 mod suggest;
 mod text;
 mod time;
+mod watch;
 
 pub use error::{Error, Result};
 pub use index::{DocumentText, Event, EventKind, Found, Index, RootStatus, Status};

@@ -13,6 +13,8 @@ license.workspace = true
 blake3 = "1"
 # ODF, .docx, .xlsx, CSV and Markdown, read by grind's own readers (doc/plan.md, "Depending on grind").
 grind-open = { git = "https://github.com/fwilhe2/grind", branch = "main" }
+# inotify on Linux, for clerk watch.
+notify = "8"
 pdf-extract = "0.12"
 # Only to read what a zip says it unpacks to, before handing it to a reader.
 zip = { version = "9", default-features = false }
