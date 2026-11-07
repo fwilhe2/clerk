@@ -74,6 +74,11 @@ fn a_move_is_journalled_indexed_and_undone() {
         std::slice::from_ref(&there),
         "indexed at once, before any scan"
     );
+    assert_eq!(
+        index.find(&["statement 2"]).unwrap()[0].context.as_deref(),
+        Some("[statement 2]"),
+        "and found by its text"
+    );
     let hash = hash_file(&there).unwrap();
     let history = index.history(&hash).unwrap();
     assert_eq!(history.last().unwrap().kind, EventKind::Moved);

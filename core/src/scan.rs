@@ -282,9 +282,9 @@ impl Index {
         Ok(report)
     }
 
-    /// Read the text of each document below `root` that has none from the current readers,
-    /// committing now and then so a scan that is stopped keeps what it read.
-    fn read_texts(
+    /// Read the text of each document at or below `root` that has none from the current
+    /// readers, committing now and then so a scan that is stopped keeps what it read.
+    pub(crate) fn read_texts(
         &mut self,
         root: &Path,
         progress: &mut impl FnMut(Progress),

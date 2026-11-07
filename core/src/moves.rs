@@ -63,6 +63,7 @@ impl Index {
         )?;
         let id = tx.last_insert_rowid();
         tx.commit()?;
+        self.read_text_at(&to)?;
         Ok(Move {
             id,
             at,
@@ -97,6 +98,7 @@ impl Index {
             params![at, last.id],
         )?;
         tx.commit()?;
+        self.read_text_at(&last.from)?;
         last.undone = Some(at);
         Ok(last)
     }
@@ -118,6 +120,12 @@ impl Index {
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Read the text of a file just moved to `path`, if it is in a scanned folder and its text
+    /// was never read, so it is found by its text at once rather than after the next scan.
+    fn read_text_at(&mut self, path: &Path) -> Result<()> {
+        self.read_texts(path, &mut |_| {}, &mut crate::Report::default())
     }
 
     /// The index after `hash` went from `from` to `to`: the file is where it is now, as far as
