@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Florian Wilhelm <fwilhelm.wgt+github@gmail.com>
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[workspace]
+members = ["core", "cli"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "AGPL-3.0-or-later"
+
+# Hashing is where a first scan spends its time; an unoptimised hasher makes it minutes slower.
+[profile.dev.package.blake3]
+opt-level = 3

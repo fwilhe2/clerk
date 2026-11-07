@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 Florian Wilhelm <fwilhelm.wgt+github@gmail.com>
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+name = "clerk-cli"
+version = "0.0.0"
+description = "The clerk command"
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "clerk"
+path = "src/main.rs"
+
+[dependencies]
+clerk-core = { path = "../core" }
+clap = { version = "4", features = ["derive", "env"] }
+
+[dev-dependencies]
+tempfile = "3"

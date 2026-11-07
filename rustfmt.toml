@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Florian Wilhelm <fwilhelm.wgt+github@gmail.com>
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# The formatter is not a place to have opinions: these are rustfmt's own defaults, written
+# down so that `cargo fmt` is the same operation on every machine and in every editor that
+# runs it on save. Everything else worth setting here (import grouping, comment wrapping) is
+# nightly-only, and a config CI cannot check is a config that drifts.
+#
+# Comments and string literals are left alone by default, which is why a handful of them —
+# the catalog's spec-verbatim summaries above all — run past the column.
+style_edition = "2024"
+max_width = 100
