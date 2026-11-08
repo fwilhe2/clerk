@@ -147,3 +147,17 @@ fn a_folder_inside_one_already_scanned_is_covered_by_it() {
     index.scan(&root.join("Finanzen"), |_| {}).unwrap();
     assert_eq!(index.roots().unwrap(), [root]);
 }
+
+#[test]
+fn a_path_says_which_document_was_there_when_scanned() {
+    let (docs, _keep, mut index) = setup();
+    let root = docs.path().canonicalize().unwrap();
+    write(&root, "a/letter.txt", b"a letter");
+    index.scan(&root, |_| {}).unwrap();
+    let letter = root.join("a/letter.txt");
+    assert_eq!(
+        index.hash_at(&letter).unwrap(),
+        Some(hash_file(&letter).unwrap())
+    );
+    assert_eq!(index.hash_at(&root.join("a/none.txt")).unwrap(), None);
+}

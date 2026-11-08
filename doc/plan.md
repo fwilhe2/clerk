@@ -54,6 +54,7 @@ can do, the CLI can do.
 |---|---|---|
 | `clerk-core` | `core/` | The index (SQLite), scanning, identity, history, search |
 | `clerk-cli` | `cli/` | The `clerk` binary |
+| `clerk-gui` | `gui/` | The `clerk-gtk` app, GTK 4 and libadwaita |
 
 ## Depending on grind
 

@@ -240,6 +240,8 @@ impl Index {
         }
         let conn = Connection::open(file)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        // A shell may write (a move) while its watch is scanning; one waits for the other.
+        conn.busy_timeout(std::time::Duration::from_secs(10))?;
         conn.pragma_update(None, "foreign_keys", true)?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         if version > MIGRATIONS.len() as i64 {
@@ -383,6 +385,17 @@ impl Index {
             .into_iter()
             .map(path_of)
             .collect())
+    }
+
+    /// The document at `path` when it was last scanned, without reading the file.
+    pub fn hash_at(&self, path: &Path) -> Result<Option<Hash>> {
+        let bytes = self
+            .conn
+            .query_row("SELECT hash FROM files WHERE path = ?1", [key(path)], |r| {
+                r.get::<_, Vec<u8>>(0)
+            })
+            .optional()?;
+        Ok(bytes.map(hash_of).transpose()?)
     }
 
     /// What scans saw happen to the document `hash`, oldest first.

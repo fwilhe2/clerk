@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 [workspace]
-members = ["core", "cli"]
+members = ["core", "cli", "gui"]
 resolver = "3"
 
 [workspace.package]

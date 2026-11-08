@@ -33,7 +33,8 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 RUSTDOCFLAGS=-D warnings cargo doc --no-deps
-cargo run -- --index /tmp/i.sqlite scan ~/Documents
+cargo run -p clerk-cli -- --index /tmp/i.sqlite scan ~/Documents
+cargo run -p clerk-gui -- --index /tmp/i.sqlite --inbox /tmp/Downloads
 ```
 
 Use `--index` (or `CLERK_INDEX`) when trying it, so the person's own index is not touched.
@@ -44,6 +45,7 @@ Use `--index` (or `CLERK_INDEX`) when trying it, so the person's own index is no
 |---|---|---|
 | `clerk-core` | `core/` | The index (SQLite, migrations by `user_version`), scanning, identity, history, search |
 | `clerk-cli` | `cli/` | The `clerk` binary; calls the core and owns nothing |
+| `clerk-gui` | `gui/` | The `clerk-gtk` app (GTK 4, libadwaita); calls the core and owns nothing |
 
 Office documents are read through grind's crates, a git dependency on grind's `main`
 (`doc/plan.md`, "Depending on grind"). A change both need lands in grind first; to build against
