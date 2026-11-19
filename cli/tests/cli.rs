@@ -7,6 +7,8 @@
 use std::fs;
 use std::process::{Command, Output};
 
+use clerk_core::hash_file;
+
 #[path = "../../core/tests/common/mod.rs"]
 mod common;
 
@@ -86,6 +88,35 @@ fn a_document_is_found_and_followed_after_a_move() {
     let mut lines = found.lines();
     assert_eq!(lines.next(), root.join("Finanzen/Nebenkosten.txt").to_str());
     assert!(lines.next().unwrap().contains("[Nachzahlung]"), "{found}");
+
+    let nebenkosten = root.join("Finanzen/Nebenkosten.txt");
+    let json = |words: &[&str]| -> Vec<serde_json::Value> {
+        let args = [&["find", "--json"], words].concat();
+        ok(clerk(&index, &args))
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("one JSON object per line"))
+            .collect()
+    };
+    let by_text = json(&["nachzahlung"]);
+    assert_eq!(by_text.len(), 1, "{by_text:?}");
+    assert_eq!(by_text[0]["path"], nebenkosten.to_str().unwrap());
+    assert_eq!(
+        by_text[0]["hash"],
+        hash_file(&nebenkosten).unwrap().to_string()
+    );
+    assert_eq!(
+        by_text[0]["size"],
+        fs::metadata(&nebenkosten).unwrap().len()
+    );
+    assert!(
+        by_text[0]["context"]
+            .as_str()
+            .unwrap()
+            .contains("[Nachzahlung]")
+    );
+    let by_name = json(&["nebenkosten.txt"]);
+    assert_eq!(by_name.len(), 1, "{by_name:?}");
+    assert!(by_name[0]["context"].is_null(), "{by_name:?}");
     let text = ok(clerk(
         &index,
         &[

@@ -47,6 +47,10 @@ enum Command {
         /// Show, under each document found by its text, where in the text
         #[arg(long, short)]
         context: bool,
+        /// Print one JSON object per line instead, for other programs: "path", "hash", "size",
+        /// and "context", where in the text, or null for a document found by its path
+        #[arg(long)]
+        json: bool,
     },
     /// The text clerk read from a document, which is what find searches
     ///
@@ -132,9 +136,25 @@ fn run(cli: Cli) -> Result<(), String> {
     let mut index = Index::open(&file).map_err(|e| e.to_string())?;
     match cli.command {
         Command::Scan { folders, verbose } => scan(&mut index, folders, verbose),
-        Command::Find { words, context } => {
+        Command::Find {
+            words,
+            context,
+            json,
+        } => {
             let words: Vec<&str> = words.iter().map(String::as_str).collect();
             for found in index.find(&words).map_err(|e| e.to_string())? {
+                if json {
+                    // ponytail: a path that is not UTF-8 is written with U+FFFD in it, so a
+                    // program cannot open it by that path.
+                    let line = serde_json::json!({
+                        "path": found.path.to_string_lossy(),
+                        "hash": found.hash.to_string(),
+                        "size": found.size,
+                        "context": found.context,
+                    });
+                    println!("{line}");
+                    continue;
+                }
                 println!("{}", found.path.display());
                 if let Some(text) = found.context.filter(|_| context) {
                     println!("\t{text}");
