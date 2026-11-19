@@ -19,7 +19,7 @@ pdf-extract = "0.12"
 # Only to read what a zip says it unpacks to, before handing it to a reader.
 zip = { version = "9", default-features = false }
 # SQLite compiled in, so the index is the same file format on every system.
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 tempfile = "3"
 walkdir = "2"
 
