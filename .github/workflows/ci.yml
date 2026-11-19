@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get update -yqq
       # OCR (M3), so its tests run rather than pass with a notice.
       - run: sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-deu poppler-utils
       # The app's toolkit: GTK 4.14 and libadwaita 1.5 at least.
