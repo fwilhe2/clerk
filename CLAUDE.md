@@ -47,7 +47,7 @@ Use `--index` (or `CLERK_INDEX`) when trying it, so the person's own index is no
 | `clerk-cli` | `cli/` | The `clerk` binary; calls the core and owns nothing |
 | `clerk-gui` | `gui/` | The `clerk-gtk` app (GTK 4, libadwaita); calls the core and owns nothing |
 
-Office documents are read through grind's crates, a git dependency on grind's `main`
+Office documents are read through grind's crates, a git dependency on a grind release tag
 (`doc/plan.md`, "Depending on grind"). A change both need lands in grind first; to build against
 the checkout at `../grind` meanwhile, use the uncommitted `.cargo/config.toml` patch described
 there, and remove it before committing.

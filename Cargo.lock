@@ -775,8 +775,8 @@ dependencies = [
 
 [[package]]
 name = "grind-core"
-version = "0.0.0"
-source = "git+https://github.com/fwilhe2/grind?branch=main#a5bb51352bf45b9c5df1da57e5be1ddb000df007"
+version = "0.1.1"
+source = "git+https://github.com/fwilhe2/grind?tag=v0.1.1#5cd6fb326a261c963a8b69ee687c589956369ead"
 dependencies = [
  "base64",
  "kdl",
@@ -788,8 +788,8 @@ dependencies = [
 
 [[package]]
 name = "grind-docx"
-version = "0.0.0"
-source = "git+https://github.com/fwilhe2/grind?branch=main#a5bb51352bf45b9c5df1da57e5be1ddb000df007"
+version = "0.1.1"
+source = "git+https://github.com/fwilhe2/grind?tag=v0.1.1#5cd6fb326a261c963a8b69ee687c589956369ead"
 dependencies = [
  "base64",
  "grind-core",
@@ -799,8 +799,8 @@ dependencies = [
 
 [[package]]
 name = "grind-ooxml"
-version = "0.0.0"
-source = "git+https://github.com/fwilhe2/grind?branch=main#a5bb51352bf45b9c5df1da57e5be1ddb000df007"
+version = "0.1.1"
+source = "git+https://github.com/fwilhe2/grind?tag=v0.1.1#5cd6fb326a261c963a8b69ee687c589956369ead"
 dependencies = [
  "grind-core",
  "quick-xml",
@@ -809,8 +809,8 @@ dependencies = [
 
 [[package]]
 name = "grind-open"
-version = "0.0.0"
-source = "git+https://github.com/fwilhe2/grind?branch=main#a5bb51352bf45b9c5df1da57e5be1ddb000df007"
+version = "0.1.1"
+source = "git+https://github.com/fwilhe2/grind?tag=v0.1.1#5cd6fb326a261c963a8b69ee687c589956369ead"
 dependencies = [
  "grind-core",
  "grind-docx",
@@ -821,8 +821,8 @@ dependencies = [
 
 [[package]]
 name = "grind-sheet"
-version = "0.0.0"
-source = "git+https://github.com/fwilhe2/grind?branch=main#a5bb51352bf45b9c5df1da57e5be1ddb000df007"
+version = "0.1.1"
+source = "git+https://github.com/fwilhe2/grind?tag=v0.1.1#5cd6fb326a261c963a8b69ee687c589956369ead"
 dependencies = [
  "grind-core",
  "quick-xml",
@@ -832,8 +832,8 @@ dependencies = [
 
 [[package]]
 name = "grind-text"
-version = "0.0.0"
-source = "git+https://github.com/fwilhe2/grind?branch=main#a5bb51352bf45b9c5df1da57e5be1ddb000df007"
+version = "0.1.1"
+source = "git+https://github.com/fwilhe2/grind?tag=v0.1.1#5cd6fb326a261c963a8b69ee687c589956369ead"
 dependencies = [
  "base64",
  "grind-core",
@@ -842,8 +842,8 @@ dependencies = [
 
 [[package]]
 name = "grind-xlsx"
-version = "0.0.0"
-source = "git+https://github.com/fwilhe2/grind?branch=main#a5bb51352bf45b9c5df1da57e5be1ddb000df007"
+version = "0.1.1"
+source = "git+https://github.com/fwilhe2/grind?tag=v0.1.1#5cd6fb326a261c963a8b69ee687c589956369ead"
 dependencies = [
  "grind-ooxml",
  "grind-sheet",

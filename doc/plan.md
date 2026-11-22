@@ -62,11 +62,12 @@ Office documents are read by [grind](https://github.com/fwilhe2/grind)'s readers
 its word processor and spreadsheet use: `grind-open` tells ODF, `.docx` and `.xlsx` apart by
 their bytes and hands back a document. Both projects are AGPL-3.0-or-later.
 
-- **A git dependency on `main`**, since grind has no release:
-  `grind-open = { git = "https://github.com/fwilhe2/grind", branch = "main" }`. Nothing is
-  published; grind's crates are `0.0.0` and cargo finds them by name in grind's workspace.
-- **`Cargo.lock` pins the commit.** clerk moves to grind's latest `main` only on
-  `cargo update -p grind-open`, run on purpose and followed by the tests.
+- **A git dependency on a release tag**, since grind's releases are tagged but not published to
+  crates.io: `grind-open = { git = "https://github.com/fwilhe2/grind", tag = "v0.1.1" }`. Cargo
+  finds grind's other crates by name in grind's workspace.
+- **clerk moves to a newer release on purpose:** a new tag in `core/Cargo.toml` (Dependabot
+  proposes it), followed by the tests. An unreleased commit of grind's `main` only when clerk
+  needs something no release has yet, and back to a tag with grind's next release.
 - **Working on both at once:** a `.cargo/config.toml` that is never committed (`.gitignore`
   names it) points clerk at the checkout next to it:
 
